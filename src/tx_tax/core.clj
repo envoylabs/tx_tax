@@ -13,7 +13,8 @@
 
 ;; tx utils. these all process one entry in the txs
 (defn get-height-from [tx]
-  (get tx "height"))
+  (-> (get tx "height")
+      Integer/parseInt))
 
 (defn get-tx-hash-from [tx]
   (get tx "txhash"))
@@ -26,17 +27,20 @@
 
 (defn get-rcv-msgs-from [logs]
   (->> (map #(get % "events") logs)
-       first
-       (filter #(= (get % "type")
-                   "coin_received"))))
+       (map (fn [events]
+              (filter #(= (get % "type")
+                          "coin_received")
+                      events)))
+       (reduce into)))
 
 (defn get-rcv-msgs-from-tx-for [acct tx]
   (try
     (let [logs (get-logs-from tx)
           rcv-msgs (->> (get-rcv-msgs-from logs)
-                        (map #(get % "attributes"))) ;; drop down into the msgs
-          indexed-tuples (->> (map #(map-indexed vector %) rcv-msgs)
-                              (reduce into)) ;; create indexes, flatten
+                        (map #(get % "attributes"))) ;; drop down into msgs & flatten
+          indexed-tuples (->> rcv-msgs
+                              (reduce into)
+                              (map-indexed (fn [idx m] [idx m])))
           idxs (->> indexed-tuples ;; get where value is the acct
                     (filter #(= acct
                                 (-> (second %)
@@ -45,8 +49,7 @@
           get-amount-by-idx (fn [idx] (-> (nth indexed-tuples
                                               (inc idx)) ;; the next entry will be the amount
                                          second ;; get the hashmap not idx
-                                         (get "value")))
-          ]
+                                         (get "value")))]
       (map get-amount-by-idx idxs))
     (catch Exception e
       ["0ujuno"])))
@@ -152,3 +155,8 @@
   "I don't do a whole lot ... yet."
   [& args]
   (println "Hello, World!"))
+
+;; for testing
+(comment
+  (def test-tx (nth (->> (read-json-file "./test_data/test.json") get-txs) 1))
+  (def test-tx-2 (nth (->> (read-json-file "./test_data/validator_test.json") get-txs) 2)))
