@@ -24,6 +24,33 @@
 (defn get-logs-from [tx]
   (get tx "logs"))
 
+(defn get-rcv-msgs-from [logs]
+  (->> (map #(get % "events") logs)
+       first
+       (filter #(= (get % "type")
+                   "coin_received"))))
+
+(defn get-rcv-msgs-from-tx-for [acct tx]
+  (try
+    (let [logs (get-logs-from tx)
+          rcv-msgs (->> (get-rcv-msgs-from logs)
+                        (map #(get % "attributes"))) ;; drop down into the msgs
+          indexed-tuples (->> (map #(map-indexed vector %) rcv-msgs)
+                              (reduce into)) ;; create indexes, flatten
+          idxs (->> indexed-tuples ;; get where value is the acct
+                    (filter #(= acct
+                                (-> (second %)
+                                    (get "value"))))
+                    (map first))
+          get-amount-by-idx (fn [idx] (-> (nth indexed-tuples
+                                              (inc idx)) ;; the next entry will be the amount
+                                         second ;; get the hashmap not idx
+                                         (get "value")))
+          ]
+      (map get-amount-by-idx idxs))
+    (catch Exception e
+      ["0ujuno"])))
+
 ;; this assumes the structure of the wasm
 ;; receieve message
 (defn get-received-amount-from [tx]
@@ -31,18 +58,16 @@
    coin_received is the second"
   (try
    (let [logs (get-logs-from tx)
-         rcv-msg (-> (first logs)  ;; it's a vec of length 1
-                     (get "events")           ;; get events key
-                     (nth 1))                 ;; then second event
-         amount (-> (get rcv-msg "attributes") ;; get this top level key
-                    (nth 3)
-                    (get "value")) ;; this needs serious checking but seems right
-         ]
-     amount)
+         rcv-msgs (get-rcv-msgs-from logs)
+         amounts (->> (map #(get % "attributes") rcv-msgs)
+                      (filter #(= (get % "key") "amount")) ;; get this top level key
+                      (map #(get % "value"))) ]
+     amounts)
    (catch Exception e
      "0ujuno")))
 
 (defn process [file-path]
+  "This assumes a particular file structure"
   (let [txs (->> (read-json-file file-path) get-txs)]
     (map (fn [tx]
            {:height (get-height-from tx)
@@ -50,6 +75,29 @@
             :timestamp (get-timestamp-from tx)
             :amount (get-received-amount-from tx)})
          txs)))
+
+(defn process-multi [acct file-path]
+  "This assumes a number of events in the log
+   and that it will be looking up the relevant
+   ones using the provided address"
+  (let [txs (->> (read-json-file file-path) get-txs)]
+    (->> (map (fn [tx]
+                (let [amounts (get-rcv-msgs-from-tx-for acct tx)]
+                  (map (fn [amt] {:height (get-height-from tx)
+                                 :tx-hash (get-tx-hash-from tx)
+                                 :timestamp (get-timestamp-from tx)
+                                 :amount amt})
+                       amounts)))
+              txs)
+         (reduce into))))
+;; example usage
+(comment
+  (->> (cat-n-pages 49
+                    "./data/whoami"
+                    (partial process-multi "juno1t4l87r4zvyp2p24dscet4e6atjf28r98yeq2h3"))
+       (sort-by :height)
+       (processed-json->csv "./output/received.csv")))
+
 
 (defn process-n-pages [n file-root f]
   "Applies a function f to a number of pages n
@@ -75,9 +123,10 @@
       (println "Processed in each page:")
       (map-indexed (fn [idx page] (println (str "Page " idx ": " (count page)))) processed))))
 
-(defn cat-n-pages [n file-root]
-  "Warning: although this is lazy, eventually it will blow up, of course"
-  (let [processed (process-n-pages n file-root process)]
+(defn cat-n-pages [n file-root f]
+  "Warning: although this is lazy, eventually it will blow up, of course
+   Takes a function f to use when processing"
+  (let [processed (process-n-pages n file-root f)]
     (reduce into processed)))
 
 (defn processed-json->csv [out-file json-entries-coll]
