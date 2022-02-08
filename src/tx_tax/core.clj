@@ -136,7 +136,8 @@
   (-> (clojure.string/replace microdenom-string
                               #"[A-z]*"
                               "")
-      Integer/parseInt
+      clojure.string/trim
+      Long/parseLong
       (/ 1000000)
       double))
 
