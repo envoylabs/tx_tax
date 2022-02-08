@@ -132,10 +132,18 @@
   (let [processed (process-n-pages n file-root f)]
     (reduce into processed)))
 
+(defn microdenom->raw-denom [microdenom-string]
+  (-> (clojure.string/replace microdenom-string
+                              #"[A-z]*"
+                              "")
+      Integer/parseInt
+      (/ 1000000)
+      double))
+
 (defn processed-json->csv [out-file json-entries-coll]
   "This takes the output of process
    and converts it into a csv"
-  (let [header-row ["Height" "Timestamp" "Amount" "Tx"]
+  (let [header-row ["Height" "Timestamp" "Amount with Denom" "Decimal Amount" "Tx"]
         rows (map (fn [{height :height
                        timestamp :timestamp
                        amount :amount
@@ -144,6 +152,7 @@
                     [height
                      timestamp
                      amount
+                     (microdenom->raw-denom amount)
                      tx])
                   json-entries-coll)]
     (with-open [writer (io/writer out-file)]
