@@ -11,6 +11,9 @@
 (defn get-txs [json]
   (get json "txs"))
 
+(defn get-tx-responses [json]
+  (get json "tx_responses"))
+
 ;; tx utils. these all process one entry in the txs
 (defn get-height-from [tx]
   (-> (get tx "height")
@@ -79,11 +82,13 @@
             :amount (get-received-amount-from tx)})
          txs)))
 
-(defn process-multi [acct file-path]
+(defn process-multi [acct from-rpc file-path]
   "This assumes a number of events in the log
    and that it will be looking up the relevant
    ones using the provided address"
-  (let [txs (->> (read-json-file file-path) get-txs)]
+  (let [txs (if from-rpc
+              (->> (read-json-file file-path) get-tx-responses)
+              (->> (read-json-file file-path) get-txs))]
     (->> (map (fn [tx]
                 (let [amounts (get-rcv-msgs-from-tx-for acct tx)]
                   (map (fn [amt] {:height (get-height-from tx)
@@ -97,10 +102,16 @@
 (comment
   (->> (cat-n-pages 49
                     "./data/whoami"
-                    (partial process-multi "juno1t4l87r4zvyp2p24dscet4e6atjf28r98yeq2h3"))
+                    (partial process-multi "juno1t4l87r4zvyp2p24dscet4e6atjf28r98yeq2h3" false))
        (sort-by :height)
-       (processed-json->csv "./output/received.csv")))
+       (processed-json->csv "./output/received.csv"))
 
+  (->> (cat-n-pages 10
+                    "../genesis_to_chain_halt"
+                    (partial process-multi "juno1t4l87r4zvyp2p24dscet4e6atjf28r98yeq2h3" true))
+       distinct
+       (sort-by :height)
+       (processed-json->csv "./output/received_until_chain_halt.csv")))
 
 (defn process-n-pages [n file-root f]
   "Applies a function f to a number of pages n
